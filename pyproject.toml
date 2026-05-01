@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dprox"
+version = "0.1.0-dev"
+description = "RBAC-enforcing query proxy for ARC Power's RAG system"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "ARC Power" }]
+license = { text = "TBD" }
+keywords = ["rag", "rbac", "qdrant", "mtls", "proxy"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+]
+
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+    "qdrant-client>=1.9,<2.0",
+    "httpx>=0.27,<1.0",
+    "structlog>=24.0,<25.0",
+    "pyyaml>=6.0,<7.0",
+    "cryptography>=42.0",
+    "pydantic>=2.0,<3.0",
+    "click>=8.0,<9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+dprox = "dprox.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dprox"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = []
+
+[tool.coverage.run]
+source = ["src/dprox"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
