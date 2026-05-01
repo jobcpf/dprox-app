@@ -4,10 +4,12 @@ import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 
 from dprox.config import Config
+from dprox.ollama import OllamaClient
 from dprox.plan import PlanCache
 
 
@@ -126,3 +128,34 @@ def plan_cache(baseline_config: Config) -> PlanCache:
     cache = PlanCache(baseline_config.plan)
     cache.initial_load()
     return cache
+
+
+@pytest.fixture
+def mock_ollama_handler(baseline_config: Config) -> Callable[[httpx.Request], httpx.Response]:
+    """Default mock: model present in tags, embed returns a vector of the right dim."""
+    expected_model = baseline_config.embedding.model
+    expected_dim = baseline_config.embedding.vector_dim
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={"models": [{"name": f"{expected_model}:latest"}]},
+            )
+        if request.url.path == "/api/embeddings":
+            return httpx.Response(200, json={"embedding": [0.1] * expected_dim})
+        return httpx.Response(404, json={"error": f"unexpected path {request.url.path}"})
+
+    return handler
+
+
+@pytest.fixture
+def mock_ollama(
+    baseline_config: Config,
+    mock_ollama_handler: Callable[[httpx.Request], httpx.Response],
+) -> OllamaClient:
+    """An OllamaClient wired to a MockTransport. Pass into create_app()."""
+    return OllamaClient(
+        baseline_config.embedding,
+        transport=httpx.MockTransport(mock_ollama_handler),
+    )
