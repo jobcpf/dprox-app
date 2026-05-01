@@ -3,7 +3,17 @@ import sys
 import click
 import uvicorn
 
+from dprox.config import Config, ConfigError, load_config, resolve_config_path
 from dprox.version import __version__
+
+
+def _load_or_exit(config_path: str | None, exit_code: int) -> Config:
+    """Load config or print [FAIL] and exit. Used by serve (exit 3) and health (exit 2)."""
+    try:
+        return load_config(config_path)
+    except ConfigError as exc:
+        click.echo(f"[FAIL] config: {exc}", err=True)
+        sys.exit(exit_code)
 
 
 @click.group(help="dprox — RBAC-enforcing query proxy.")
@@ -12,19 +22,41 @@ def cli() -> None:
 
 
 @cli.command(help="Start the HTTP(S) server.")
-@click.option("--host", default="0.0.0.0", show_default=True, help="Bind host.")
-@click.option("--port", default=8000, show_default=True, type=int, help="Bind port.")
-def serve(host: str, port: int) -> None:
-    # Skeleton — TLS, mTLS, config-driven binding land in build steps 2–4.
-    # Default to plain HTTP on :8000 for local skeleton testing; production
-    # serves :8443 with TLS.
-    uvicorn.run("dprox.server:app", host=host, port=port, log_level="info")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(),
+    help="Path to config.yml. Falls back to DPROX_CONFIG, then /etc/dprox/config.yml.",
+)
+def serve(config_path: str | None) -> None:
+    config = _load_or_exit(config_path, exit_code=3)
+
+    # TLS / mTLS land in build step 4. For now: plain HTTP on the configured bind.
+    from dprox.server import create_app
+
+    app = create_app(config)
+    uvicorn.run(
+        app,
+        host=config.server.host,
+        port=config.server.port,
+        log_level=config.logging.level.lower(),
+    )
 
 
-@cli.command(help="Run upstream checks and exit.")
-def health() -> None:
-    # Skeleton — real plan/Ollama/Qdrant checks land in build step 8.
-    click.echo(f"[OK]   skeleton                 dprox v{__version__}")
+@cli.command(help="Run startup + upstream checks and exit.")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(),
+    help="Path to config.yml. Falls back to DPROX_CONFIG, then /etc/dprox/config.yml.",
+)
+def health(config_path: str | None) -> None:
+    resolved = resolve_config_path(config_path)
+    config = _load_or_exit(config_path, exit_code=2)
+    click.echo(f"[OK]   config                   {resolved} (org={config.org})")
+    # Upstream checks (Qdrant, Ollama, plan) land in build step 8.
     sys.exit(0)
 
 

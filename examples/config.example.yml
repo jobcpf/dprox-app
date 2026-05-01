@@ -1,0 +1,51 @@
+# Example dprox config — production shape.
+# Per-org values are templated by the platform's Ansible from the registry.
+# Schema: see src/dprox/config.py and dprox-design-spec-v0.1.md §6.2.
+
+# Org name — for logging only.
+org: arc
+
+server:
+  bind: "0.0.0.0:8443"
+  request_timeout_seconds: 30        # outer envelope; per-stage timeouts below
+  max_request_body_bytes: 65536      # generous; queries are small
+
+# mTLS configuration. Cert files are mounted into the container at
+# /etc/dprox/certs/ by Ansible (see cert-provisioning-brief.md).
+mtls:
+  ca_cert_path: /etc/dprox/certs/ca.crt
+  server_cert_path: /etc/dprox/certs/server.crt
+  server_key_path: /etc/dprox/certs/server.key
+  client_cert_mode: optional         # listener accepts client cert; routes enforce
+  cn_to_agent_strategy: cn_equals_name
+  tls_min_version: "TLSv1.3"
+  tls_pin_enabled: true
+
+# Plan source (read-only). Mounted from /mnt/registry by compose.
+plan:
+  compiled_plan_path: /mnt/registry/compiled_plan.yml
+  cache_enabled: true
+  reload_on_mtime_change: true
+  reload_on_unknown_cn: true
+  reload_min_interval_seconds: 5
+
+# Embedding (must match Ingstr's config exactly — same model, same dim).
+embedding:
+  endpoint: http://172.16.32.32:11434
+  model: nomic-embed-text
+  vector_dim: 768
+  timeout_seconds: 10
+
+# Qdrant (read-only access).
+qdrant:
+  url: http://qdrant_arc:6333
+  api_key_env: QDRANT_RO_API_KEY     # name of env var holding the RO key
+  collection: documents
+  default_limit: 10
+  max_limit: 50
+  timeout_seconds: 10
+
+logging:
+  level: INFO
+  format: json
+  log_query_text: false              # full query text only at DEBUG
