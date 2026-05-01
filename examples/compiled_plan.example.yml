@@ -1,0 +1,38 @@
+# Example compiled plan — synthetic data illustrating the schema.
+# Real plans are produced by `rbac-compile` from the platform's
+# agent_registry.yml + per-org definitions and consumed by dprox at
+# /mnt/registry/compiled_plan.yml in the container.
+
+meta:
+  compiled_at: '2026-01-01T00:00:00Z'
+  compiler_version: 0.3.0
+
+# Informational; dprox doesn't validate against this set in v0.1.
+required_groups:
+- example_g0_engineering
+- example_g1_finance
+- example_g2_admin
+
+agent_users:
+- name: agent_alice
+  description: Engineering agent (example)
+  groups:
+  - example_g0_engineering
+
+- name: agent_bob
+  description: Finance agent (example)
+  groups:
+  - example_g1_finance
+
+- name: agent_oversight
+  description: Cross-functional oversight agent (example)
+  groups:
+  - example_g0_engineering
+  - example_g1_finance
+
+admin_users:
+- name: admin_alice
+  groups:
+  - example_g0_engineering
+  - example_g1_finance
+  - example_g2_admin

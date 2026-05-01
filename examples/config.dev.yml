@@ -22,7 +22,10 @@ mtls:
   tls_pin_enabled: true
 
 plan:
-  compiled_plan_path: ./.compiled/compiled_plan.yml
+  # Synthetic dev plan; for testing against real platform data, copy the
+  # platform's compiled_plan.yml to ./.compiled/compiled_plan.yml and
+  # change this path to ./.compiled/compiled_plan.yml.
+  compiled_plan_path: ./examples/compiled_plan.example.yml
   cache_enabled: true
   reload_on_mtime_change: true
   reload_on_unknown_cn: true
