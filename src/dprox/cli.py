@@ -6,6 +6,7 @@ from typing import Any
 import click
 import uvicorn
 
+from dprox.audit import configure_logging
 from dprox.config import Config, ConfigError, MTLSConfig, load_config, resolve_config_path
 from dprox.mtls import DproxHttpProtocol
 from dprox.ollama import OllamaClient
@@ -176,6 +177,9 @@ def serve(config_path: str | None) -> None:
     config = _load_or_exit(config_path, exit_code=3)
     _verify_cert_files_or_exit(config.mtls)
     plan_cache = _build_plan_cache_or_exit(config, exit_code=3)
+
+    # Wire audit/operational logging before any handler runs.
+    configure_logging(level=config.logging.level, fmt=config.logging.format)
 
     from dprox.server import create_app
 

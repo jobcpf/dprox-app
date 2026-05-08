@@ -1,4 +1,5 @@
 import hashlib
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -7,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from dprox.audit import audit_reason_for_auth_failure, get_audit_logger
 from dprox.config import Config
 from dprox.mtls import AuthFailure, auth_failure_to_dict, require_mtls
 from dprox.ollama import OllamaClient, OllamaTimeout, OllamaUnavailable
@@ -41,7 +43,6 @@ def _format_validation_error(err: dict[str, Any]) -> str:
     """Map a single Pydantic v2 ValidationError dict to a human-readable message."""
     err_type = err.get("type", "")
     loc = err.get("loc", ())
-    # Skip the implicit "body" prefix that FastAPI prepends.
     parts = [str(p) for p in loc if p != "body"]
     field_path = ".".join(parts) if parts else ""
 
@@ -84,6 +85,12 @@ def _hit_to_dict(h: QdrantHit) -> dict[str, Any]:
     }
 
 
+def _remote_addr(request: Request) -> str | None:
+    """Best-effort client IP for audit logging."""
+    client = request.client
+    return client.host if client else None
+
+
 def create_app(
     config: Config,
     plan_cache: PlanCache,
@@ -97,8 +104,8 @@ def create_app(
 
     `ollama` and `qdrant` are optional. When omitted, real clients are
     constructed here and closed at lifespan shutdown. When supplied
-    (e.g. by tests with a MockTransport / AsyncMock), the caller owns
-    their lifecycle and lifespan leaves them alone.
+    (e.g. by tests), the caller owns their lifecycle and lifespan
+    leaves them alone.
     """
     own_ollama = ollama is None
     if ollama is None:
@@ -107,6 +114,8 @@ def create_app(
     own_qdrant = qdrant is None
     if qdrant is None:
         qdrant = QdrantClient(config.qdrant, config.embedding.vector_dim)
+
+    audit = get_audit_logger()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -125,16 +134,21 @@ def create_app(
     app.state.qdrant = qdrant
 
     @app.exception_handler(AuthFailure)
-    async def _handle_auth_failure(_request: Request, exc: AuthFailure) -> JSONResponse:
-        # Spec §4.3 error body shape — flat, not FastAPI's default {"detail": ...}.
-        # TODO step 10: emit auth_rejected audit log line here.
+    async def _handle_auth_failure(request: Request, exc: AuthFailure) -> JSONResponse:
+        audit.info(
+            "auth_rejected",
+            reason=audit_reason_for_auth_failure(exc.code),
+            cn=getattr(request.state, "cn", None),
+            cert_serial=getattr(request.state, "cert_serial", None),
+            remote_addr=_remote_addr(request),
+            path=request.url.path,
+        )
         return JSONResponse(status_code=exc.status, content=auth_failure_to_dict(exc))
 
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        # Map Pydantic body validation failures to the spec §4.3 400 shape.
         errors = exc.errors()
         msg = (
             _format_validation_error(errors[0])
@@ -151,9 +165,6 @@ def create_app(
             "agents": agent_count,
             "admins": admin_count,
         }
-
-        # Each /healthz hit calls Ollama and Qdrant. Acceptable for v0.1
-        # monitoring cadence (>=10s); revisit with a TTL cache if hammered.
         ollama_check = await ollama.check_health()
         qdrant_check = await qdrant.check_health()
 
@@ -183,24 +194,36 @@ def create_app(
 
     @app.post("/v1/query")
     async def query(
-        req: QueryRequest, cn: str = Depends(require_mtls)
+        req: QueryRequest, request: Request, cn: str = Depends(require_mtls)
     ) -> JSONResponse:
-        """RBAC-filtered query: auth → plan → embed → search → respond.
+        """RBAC-filtered query: auth → plan → embed → search → respond."""
+        start_mono = time.monotonic()
+        query_hash = _query_hash(req.query)
 
-        Validation order (spec §4.2):
-            1. Auth (require_mtls dependency) → 401 / 403
-            2. Body schema (FastAPI/Pydantic) → 400
-            3. Plan lookup → 403 unknown_agent
-            4. Embedding → 502/504
-            5. Search → 502/504
-        """
         # --- 3. Plan resolution -------------------------------------------------
         try:
             entry = plan_cache.lookup(cn)
         except PlanError as exc:
+            audit.info(
+                "query_failed",
+                agent=cn,
+                groups_applied=None,
+                query_hash=query_hash,
+                error="upstream_unavailable",
+                error_class=exc.__class__.__name__,
+                latency_ms=int((time.monotonic() - start_mono) * 1000),
+            )
             return _error_response(502, "upstream_unavailable", str(exc))
 
         if entry is None:
+            audit.info(
+                "auth_rejected",
+                reason="unknown_cn",
+                cn=cn,
+                cert_serial=getattr(request.state, "cert_serial", None),
+                remote_addr=_remote_addr(request),
+                path=request.url.path,
+            )
             return _error_response(
                 403,
                 "unknown_agent",
@@ -216,35 +239,67 @@ def create_app(
                 f"limit must be 1..{config.qdrant.max_limit}, got {limit}",
             )
 
+        groups_applied = sorted(entry.groups)
+
+        def _audit_failure(error_code: str, exc: Exception, ollama_ms: int | None = None) -> None:
+            audit.info(
+                "query_failed",
+                agent=entry.name,
+                groups_applied=groups_applied,
+                query_hash=query_hash,
+                error=error_code,
+                error_class=exc.__class__.__name__,
+                latency_ms=int((time.monotonic() - start_mono) * 1000),
+                ollama_ms=ollama_ms,
+            )
+
         # --- 4. Embedding -------------------------------------------------------
         try:
-            vector, _ollama_ms = await ollama.embed(req.query)
+            vector, ollama_ms = await ollama.embed(req.query)
         except OllamaTimeout as exc:
+            _audit_failure("upstream_timeout", exc)
             return _error_response(504, "upstream_timeout", str(exc))
         except OllamaUnavailable as exc:
+            _audit_failure("upstream_unavailable", exc)
             return _error_response(502, "upstream_unavailable", str(exc))
 
         # --- 5. RBAC-filtered search -------------------------------------------
         try:
-            hits, _qdrant_ms = await qdrant.search(vector, entry.groups, limit)
+            hits, qdrant_ms = await qdrant.search(vector, entry.groups, limit)
         except QdrantTimeout as exc:
+            _audit_failure("upstream_timeout", exc, ollama_ms=ollama_ms)
             return _error_response(504, "upstream_timeout", str(exc))
         except QdrantUnavailable as exc:
+            _audit_failure("upstream_unavailable", exc, ollama_ms=ollama_ms)
             return _error_response(502, "upstream_unavailable", str(exc))
 
-        # --- 6. Response shape (spec §4.2) -------------------------------------
-        # TODO step 10: emit one structured audit log line here with
-        #   {agent, groups_applied, query_hash, result_count,
-        #    latency_ms, qdrant_ms, ollama_ms}.
+        # --- 6. Audit + response ----------------------------------------------
+        latency_ms = int((time.monotonic() - start_mono) * 1000)
+        event_kwargs: dict[str, Any] = {
+            "agent": entry.name,
+            "groups_applied": groups_applied,
+            "query_hash": query_hash,
+            "result_count": len(hits),
+            "latency_ms": latency_ms,
+            "ollama_ms": ollama_ms,
+            "qdrant_ms": qdrant_ms,
+        }
+        if config.logging.log_query_text:
+            # Spec §9.1: full query text only at DEBUG when log_query_text is on.
+            event_kwargs["query_text"] = req.query
+            audit.debug("query", **event_kwargs)
+        else:
+            audit.info("query", **event_kwargs)
+
         return JSONResponse(
             status_code=200,
             content={
                 "results": [_hit_to_dict(h) for h in hits],
                 "metadata": {
                     "agent": entry.name,
-                    "groups_applied": sorted(entry.groups),
+                    "groups_applied": groups_applied,
                     "result_count": len(hits),
-                    "query_hash": _query_hash(req.query),
+                    "query_hash": query_hash,
                 },
             },
         )
