@@ -7,10 +7,7 @@ structlog or read stdout.
 
 from __future__ import annotations
 
-import asyncio
-
 import httpx
-import pytest
 import structlog
 from fastapi.testclient import TestClient
 
@@ -20,7 +17,6 @@ from dprox.ollama import OllamaClient
 from dprox.plan import PlanError
 from dprox.qdrant import QdrantClient
 from dprox.server import create_app
-
 
 # --- reason mapping (unit, no app) -------------------------------------------
 

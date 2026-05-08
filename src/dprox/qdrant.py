@@ -128,7 +128,7 @@ class QdrantClient:
         if asyncio.iscoroutine(result):
             await result
 
-    async def __aenter__(self) -> "QdrantClient":
+    async def __aenter__(self) -> QdrantClient:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
@@ -155,7 +155,7 @@ class QdrantClient:
                 limit=limit,
                 with_payload=True,
             )
-        except (asyncio.TimeoutError, TimeoutError) as exc:
+        except TimeoutError as exc:
             raise QdrantTimeout(
                 f"qdrant search timed out after {self._config.timeout_seconds}s"
             ) from exc
@@ -186,8 +186,9 @@ class QdrantClient:
                 f"qdrant point id={getattr(point, 'id', '?')!r} missing 'text' payload"
             )
         if not isinstance(group, str) or not group:
+            point_id = getattr(point, "id", "?")
             raise QdrantUnavailable(
-                f"qdrant point id={getattr(point, 'id', '?')!r} missing 'classification_group' payload"
+                f"qdrant point id={point_id!r} missing 'classification_group' payload"
             )
         return QdrantHit(
             text=text,
@@ -223,7 +224,7 @@ class QdrantClient:
                     error="collection not found",
                 )
             return self._status(reachable=False, error=f"status {exc.status_code}")
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return self._status(reachable=False, error="timeout")
         except Exception as exc:
             return self._status(

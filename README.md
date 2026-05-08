@@ -12,29 +12,22 @@ Earlier inputs are in `../proxy-brief-input.md` and `../dprox-build-brief-v0.1.m
 
 ## Status
 
-Pre-MVP. Build order is documented in §7.7 of the design spec; this repo
-currently implements **steps 1, 2, 3, 5** (step 4 implemented out-of-order
-because step 5 was unblocked while certs were in flight):
+Feature-complete for v0.1. Build steps 1–7 + 10 + 11 land in this repo;
+step 12 (smoke against the real platform) is the remaining work and
+needs a real Qdrant + agent cert.
 
-- **Step 1 (skeleton)** — `dprox version` / `dprox health` / `dprox serve`,
-  FastAPI app, `/healthz`, `/version`.
-- **Step 2 (config)** — Pydantic schema mirroring spec §6.2, YAML loader
-  honouring `DPROX_CONFIG`, exit 3 on invalid config, `--config` CLI flag.
-- **Step 3 (plan)** — `compiled_plan.yml` parser, `PlanCache` with mtime
-  invalidation + unknown-CN reload (rate-limited), fail-closed on corrupt
-  reload.
-- **Step 5 (Ollama)** — `OllamaClient.embed` and `check_health`, error
-  taxonomy (`OllamaTimeout` → 504, `OllamaUnavailable` → 502 incl. dim
-  mismatch), wired into `/healthz` and `dprox health`.
-- **Step 4 (mTLS)** — uvicorn TLS listener with `CERT_OPTIONAL`, custom
-  `DproxHttpProtocol` injects peer cert into ASGI scope, `require_mtls`
-  dependency enforces EKU=clientAuth + single-CN on `/v1/query` only,
-  `/healthz` and `/version` stay public. Stub `POST /v1/query` returns
-  the resolved agent's groups (full embed + search pipeline lands in
-  step 7).
-
-Step 6 (Qdrant), 7 (`/v1/query` end-to-end), 10 (audit logging), 11
-(CI/GHCR), 12 (smoke) remain.
+| Step | Coverage |
+|---|---|
+| 1. Skeleton | `dprox` CLI (`serve`, `health`, `version`), FastAPI app, `/healthz`, `/version` |
+| 2. Config | Pydantic v2 schema (`extra="forbid"`), `--config`/`DPROX_CONFIG`, exit 3 on bad config |
+| 3. Plan | `compiled_plan.yml` parser + `PlanCache` (mtime + unknown-CN reload, rate-limited, fail-closed) |
+| 4. mTLS | uvicorn `CERT_OPTIONAL`, custom protocol, `require_mtls` dependency (EKU + single-CN), public `/healthz`/`/version` |
+| 5. Ollama | `OllamaClient.embed` + `check_health`, error taxonomy (`OllamaTimeout` → 504, `OllamaUnavailable` → 502 incl. dim mismatch) |
+| 6. Qdrant | RBAC-filtered `search` + collection health, error taxonomy (`QdrantTimeout` → 504, `QdrantUnavailable` → 502); filter-construction path 100% tested |
+| 7. `/v1/query` | Full pipeline auth → plan → embed → search → respond, spec §4.2 response shape, validation order |
+| 10. Audit logging | `event:"query"`, `event:"query_failed"`, `event:"auth_rejected"` via structlog; `query_text` only at DEBUG |
+| 11. CI + GHCR | `Dockerfile` (slim runtime, drops to UID 10042); `test.yml` (Py 3.12 + 3.13 matrix); `release.yml` builds + pushes on tag |
+| 12. Real-platform smoke | TODO |
 
 ## Quick start (venv, Windows PowerShell)
 
@@ -129,12 +122,38 @@ tests/            Test suite (pytest, with shared fixtures in conftest.py)
 examples/         Sample config files (filled out as features land)
 ```
 
-## Versioning
+## Versioning + release
 
-`__version__` lives in [`src/dprox/version.py`](src/dprox/version.py). The
-wheel version, GHCR image tag (`ghcr.io/jobcpf/dprox:<tag>`), and the value
-served at `GET /version` all derive from it. Production deployments pin
-explicitly — never use `:latest`.
+`__version__` lives in [`src/dprox/version.py`](src/dprox/version.py).
+[`pyproject.toml`](pyproject.toml) carries the same string. Production
+deployments pin explicitly — never use `:latest`.
+
+To cut a release:
+
+```bash
+# 1. Bump version in BOTH files (no automation in v0.1 — discipline).
+#    Match exactly; release CI gates on it.
+$EDITOR src/dprox/version.py pyproject.toml
+
+# 2. Commit, tag, push.
+git commit -am "release v0.1.0"
+git tag v0.1.0
+git push origin main --tags
+```
+
+The `release.yml` workflow runs the test gate, verifies the tag matches
+`dprox.__version__`, builds the image with Buildx, and pushes both
+`ghcr.io/jobcpf/dprox:v0.1.0` and `ghcr.io/jobcpf/dprox:0.1.0`.
+
+## Cert mount permissions (production note)
+
+The platform's Ansible bind-mounts `~/docker/dprox/<org>/certs/` into the
+container at `/etc/dprox/certs/`. The container runs as **UID 10042**
+(see [`Dockerfile`](Dockerfile)). For dprox to read `server.key` (mode
+0400, owner-only), the host file must be owned by UID 10042 — either
+chown the certs at distribution time, or run the container with
+`--user $(id -u <ansi-user>)` to override. Either is fine; document
+the choice in the per-org compose template.
 
 ## License
 

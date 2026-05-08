@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import hashlib
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from dprox.config import Config
@@ -367,9 +365,8 @@ def test_query_when_ollama_unreachable_returns_502(
 def test_query_when_qdrant_times_out_returns_504(
     baseline_config, plan_cache, mock_ollama, mock_qdrant_backend
 ) -> None:
-    import asyncio
 
-    mock_qdrant_backend.search.side_effect = asyncio.TimeoutError()
+    mock_qdrant_backend.search.side_effect = TimeoutError()
     qdrant = QdrantClient(
         baseline_config.qdrant,
         baseline_config.embedding.vector_dim,

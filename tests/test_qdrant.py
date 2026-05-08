@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -206,7 +205,7 @@ async def test_search_rejects_point_with_empty_text() -> None:
 
 async def test_search_timeout_raises_qdrant_timeout() -> None:
     backend = AsyncMock()
-    backend.search.side_effect = asyncio.TimeoutError()
+    backend.search.side_effect = TimeoutError()
     client = _client(backend)
 
     with pytest.raises(QdrantTimeout, match="timed out"):
@@ -308,7 +307,7 @@ async def test_check_health_other_status_marks_unreachable() -> None:
 
 async def test_check_health_timeout() -> None:
     backend = AsyncMock()
-    backend.get_collection.side_effect = asyncio.TimeoutError()
+    backend.get_collection.side_effect = TimeoutError()
     client = _client(backend)
 
     status = await client.check_health()

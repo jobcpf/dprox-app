@@ -66,7 +66,7 @@ class OllamaClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def __aenter__(self) -> "OllamaClient":
+    async def __aenter__(self) -> OllamaClient:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:

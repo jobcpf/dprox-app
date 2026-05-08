@@ -1,0 +1,73 @@
+name: release
+
+# Tag a release with `v0.1.0` (semver, leading 'v') and push.
+# This workflow runs the full test gate, then builds and publishes
+# the container image to GHCR with both `v0.1.0` and `0.1.0` tags.
+#
+# Reminder: pyproject.toml and src/dprox/version.py must be bumped
+# to match the tag BEFORE pushing. The CI does not auto-bump.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dprox + dev extras
+        run: pip install --no-cache-dir -e ".[dev]"
+
+      - name: Test gate (lint + pytest)
+        run: |
+          ruff check src tests
+          pytest -q
+
+      - name: Verify pyproject + version.py match the tag
+        run: |
+          tag="${GITHUB_REF_NAME}"          # e.g. v0.1.0
+          version="${tag#v}"                 # e.g. 0.1.0
+          pkg_version=$(python -c "import dprox; print(dprox.__version__)")
+          if [ "$pkg_version" != "$version" ]; then
+            echo "::error::tag=$tag (=> $version) but dprox.__version__=$pkg_version"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract bare version (no leading 'v')
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build + push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/jobcpf/dprox:${{ github.ref_name }}
+            ghcr.io/jobcpf/dprox:${{ steps.version.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false

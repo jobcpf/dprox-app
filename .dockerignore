@@ -1,0 +1,44 @@
+# Keep the build context minimal — only what the Dockerfile actually copies.
+# Anything not under src/ or named pyproject.toml/README.md is excluded
+# whether or not it's listed below; the explicit entries are documentation
+# for what we deliberately omit.
+
+# Python ephemera
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local dev artefacts
+certs/
+config.local.yml
+config.dev.yml
+.compiled/
+
+# Repo / CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Testing + scripts (not shipped)
+tests/
+scripts/
+
+# Docs / examples (not needed in image)
+examples/
+docs/
+
+# IDE
+.vscode/
+.idea/
