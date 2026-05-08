@@ -10,6 +10,7 @@ from dprox.config import Config, ConfigError, MTLSConfig, load_config, resolve_c
 from dprox.mtls import DproxHttpProtocol
 from dprox.ollama import OllamaClient
 from dprox.plan import PlanCache, PlanError
+from dprox.qdrant import QdrantClient
 from dprox.version import __version__
 
 _CERT_REQS = {
@@ -99,6 +100,12 @@ async def _check_ollama(config: Config) -> dict[str, Any]:
         return await client.check_health()
 
 
+async def _check_qdrant(config: Config) -> dict[str, Any]:
+    """Run a Qdrant health probe. Wrapped as a function so tests can patch it."""
+    async with QdrantClient(config.qdrant, config.embedding.vector_dim) as client:
+        return await client.check_health()
+
+
 def _format_ollama_line(status: dict[str, Any]) -> tuple[str, bool]:
     """Format the [OK]/[FAIL] line for the CLI. Returns (line, is_ok)."""
     endpoint = status["endpoint"]
@@ -115,6 +122,41 @@ def _format_ollama_line(status: dict[str, Any]) -> tuple[str, bool]:
         f"[FAIL] ollama                   {endpoint} model={model} not in tags",
         False,
     )
+
+
+def _format_qdrant_lines(status: dict[str, Any]) -> tuple[list[str], bool]:
+    """Format the qdrant.connect + qdrant.collection [OK]/[FAIL] lines.
+
+    Returns (lines, all_ok). Mirrors spec §5.2 sample output.
+    """
+    url = status["url"]
+    collection = status["collection"]
+    lines: list[str] = []
+
+    if not status["reachable"]:
+        reason = status.get("error") or "unreachable"
+        lines.append(f"[FAIL] qdrant.connect            {url} ({reason})")
+        return lines, False
+
+    lines.append(f"[OK]   qdrant.connect            {url}")
+
+    if not status["collection_exists"]:
+        lines.append(
+            f"[FAIL] qdrant.collection         {collection} (not found)"
+        )
+        return lines, False
+
+    if not status["vector_dim_matches"]:
+        dim = status.get("vector_dim")
+        lines.append(
+            f"[FAIL] qdrant.collection         {collection} "
+            f"(vector dim mismatch: got {dim})"
+        )
+        return lines, False
+
+    dim = status["vector_dim"]
+    lines.append(f"[OK]   qdrant.collection         {collection} (dim={dim})")
+    return lines, True
 
 
 @click.group(help="dprox — RBAC-enforcing query proxy.")
@@ -164,11 +206,15 @@ def health(config_path: str | None) -> None:
     )
 
     ollama_status = asyncio.run(_check_ollama(config))
-    line, ollama_ok = _format_ollama_line(ollama_status)
-    click.echo(line, err=not ollama_ok)
+    ollama_line, ollama_ok = _format_ollama_line(ollama_status)
+    click.echo(ollama_line, err=not ollama_ok)
 
-    # Qdrant check lands in build step 6's CLI integration.
-    sys.exit(0 if ollama_ok else 2)
+    qdrant_status = asyncio.run(_check_qdrant(config))
+    qdrant_lines, qdrant_ok = _format_qdrant_lines(qdrant_status)
+    for line in qdrant_lines:
+        click.echo(line, err=not qdrant_ok)
+
+    sys.exit(0 if ollama_ok and qdrant_ok else 2)
 
 
 @cli.command(help="Print the version and exit.")

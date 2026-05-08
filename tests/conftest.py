@@ -11,6 +11,7 @@ import yaml
 from dprox.config import Config
 from dprox.ollama import OllamaClient
 from dprox.plan import PlanCache
+from dprox.qdrant import QdrantClient
 
 
 @pytest.fixture
@@ -163,4 +164,53 @@ def mock_ollama(
     return OllamaClient(
         baseline_config.embedding,
         transport=httpx.MockTransport(mock_ollama_handler),
+    )
+
+
+@pytest.fixture
+def mock_qdrant_backend(baseline_config: Config):
+    """An AsyncMock that mimics enough of AsyncQdrantClient for healthz/search.
+
+    Default behaviour: collection exists with vector size matching
+    baseline_config.embedding.vector_dim, search returns one synthetic hit.
+    Tests override the relevant method via .return_value / .side_effect.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    backend = AsyncMock()
+
+    backend.get_collection.return_value = SimpleNamespace(
+        config=SimpleNamespace(
+            params=SimpleNamespace(
+                vectors=SimpleNamespace(size=baseline_config.embedding.vector_dim)
+            )
+        )
+    )
+
+    backend.search.return_value = [
+        SimpleNamespace(
+            id=1,
+            score=0.81,
+            payload={
+                "text": "synthetic chunk",
+                "classification_group": "g_engineering",
+                "source_path_rel": "fixture/policy.docx",
+                "file_type": "docx",
+                "chunk_index": 0,
+                "chunk_total": 1,
+            },
+        )
+    ]
+    backend.close = AsyncMock(return_value=None)
+    return backend
+
+
+@pytest.fixture
+def mock_qdrant(baseline_config: Config, mock_qdrant_backend) -> QdrantClient:
+    """A QdrantClient wrapping the mock backend. Pass into create_app()."""
+    return QdrantClient(
+        baseline_config.qdrant,
+        baseline_config.embedding.vector_dim,
+        backend=mock_qdrant_backend,
     )
