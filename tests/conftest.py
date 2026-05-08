@@ -63,10 +63,15 @@ def _baseline_config_dict(tmp_path: Path, plan_path: Path) -> dict:
             "max_request_body_bytes": 65536,
         },
         "mtls": {
+            # Default to "off" so tests can exercise non-mTLS paths without
+            # creating cert files. Tests of cert validation use synthetic
+            # certs from tests/cert_helpers.py via validate_client_cert
+            # directly. Tests that exercise the full uvicorn TLS startup
+            # would override these fields.
             "ca_cert_path": str(tmp_path / "ca.crt"),
             "server_cert_path": str(tmp_path / "server.crt"),
             "server_key_path": str(tmp_path / "server.key"),
-            "client_cert_mode": "optional",
+            "client_cert_mode": "off",
             "cn_to_agent_strategy": "cn_equals_name",
             "tls_min_version": "TLSv1.3",
             "tls_pin_enabled": True,

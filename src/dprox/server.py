@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from dprox.config import Config
+from dprox.mtls import AuthFailure, auth_failure_to_dict, require_mtls
 from dprox.ollama import OllamaClient
-from dprox.plan import PlanCache
+from dprox.plan import PlanCache, PlanError
 from dprox.version import IMAGE, __version__
 
 
@@ -41,6 +42,13 @@ def create_app(
     app.state.plan_cache = plan_cache
     app.state.ollama = ollama
 
+    @app.exception_handler(AuthFailure)
+    async def _handle_auth_failure(_request: Request, exc: AuthFailure) -> JSONResponse:
+        # Spec §4.3: error body shape is {"error": code, "message": text}
+        # — flat, not FastAPI's default {"detail": ...}.
+        # TODO step 10: emit auth_rejected audit log line here.
+        return JSONResponse(status_code=exc.status, content=auth_failure_to_dict(exc))
+
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
         agent_count, admin_count = plan_cache.counts()
@@ -71,5 +79,42 @@ def create_app(
     @app.get("/version")
     def version() -> dict:
         return {"version": __version__, "image": IMAGE}
+
+    @app.post("/v1/query")
+    async def query(cn: str = Depends(require_mtls)) -> JSONResponse:
+        """Stub for build step 4.
+
+        Validates the peer cert and resolves the CN against the plan,
+        but does not yet embed/search. Full pipeline (auth → plan →
+        embed → search → respond) lands in build step 7.
+        """
+        try:
+            entry = plan_cache.lookup(cn)
+        except PlanError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={"error": "upstream_unavailable", "message": str(exc)},
+            )
+
+        if entry is None:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "unknown_agent",
+                    "message": f"agent {cn!r} not found in compiled_plan.yml",
+                },
+            )
+
+        # Step 4 stub — return the resolved identity + groups so we can
+        # exercise the full mTLS + plan pipeline end-to-end with curl.
+        return JSONResponse(
+            status_code=200,
+            content={
+                "stub": True,
+                "agent": entry.name,
+                "role": entry.role,
+                "groups": sorted(entry.groups),
+            },
+        )
 
     return app

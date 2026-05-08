@@ -143,3 +143,33 @@ def test_serve_missing_config_exits_three(tmp_path: Path) -> None:
     result = runner.invoke(cli, ["serve", "--config", str(tmp_path / "nope.yml")])
     assert result.exit_code == 3
     assert "[FAIL]" in result.output
+
+
+def test_serve_missing_cert_files_exits_three(
+    write_config, baseline_config_dict, tmp_path: Path
+) -> None:
+    """When client_cert_mode != 'off', the three cert files must exist before serve."""
+    baseline_config_dict["mtls"]["client_cert_mode"] = "optional"
+    # cert paths in baseline already point at tmp_path entries that don't exist
+    path = write_config(baseline_config_dict)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["serve", "--config", str(path)])
+    assert result.exit_code == 3
+    assert "[FAIL] mtls" in result.output
+    assert "missing" in result.output
+
+
+def test_serve_with_cert_files_present_proceeds_past_cert_check(
+    write_config, baseline_config_dict, tmp_path: Path, monkeypatch
+) -> None:
+    """Empty placeholder cert files satisfy the existence check; serve then trips on
+    the bad plan path so we don't actually need uvicorn to start."""
+    baseline_config_dict["mtls"]["client_cert_mode"] = "optional"
+    for name in ("ca.crt", "server.crt", "server.key"):
+        (tmp_path / name).write_bytes(b"placeholder")
+    baseline_config_dict["plan"]["compiled_plan_path"] = str(tmp_path / "missing.yml")
+    path = write_config(baseline_config_dict)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["serve", "--config", str(path)])
+    assert result.exit_code == 3
+    assert "[FAIL] plan" in result.output  # cert check passed; plan check failed
