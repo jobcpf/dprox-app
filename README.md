@@ -5,10 +5,10 @@ RBAC-enforcing query proxy. Read-path service for ARC Power's RAG system.
 > One dprox instance per org. Stateless, long-running, mTLS-fronted query
 > proxy in front of a per-org Qdrant collection.
 
-The canonical reference is **[../dprox-design-spec-v0.2.md](../dprox-design-spec-v0.2.md)**.
-Runtime cert contract lives in **[../dprox-cert-integration-v0.2.md](../dprox-cert-integration-v0.2.md)**;
-issuance/lifecycle in **[../cert-provisioning-brief.md](../cert-provisioning-brief.md)**.
-Earlier inputs are in `../proxy-brief-input.md` and `../dprox-build-brief-v0.1.md`.
+The canonical reference is **[../integrations/dprox-design-spec-v0.2.md](../integrations/dprox-design-spec-v0.2.md)**.
+Runtime cert contract lives in **[../integrations/dprox-cert-integration-v0.2.md](../integrations/dprox-cert-integration-v0.2.md)**;
+issuance/lifecycle in **[../integrations/cert-provisioning-brief.md](../integrations/cert-provisioning-brief.md)**.
+Earlier inputs and superseded specs are under `../integrations/archive/`.
 
 ## Status
 
