@@ -146,7 +146,7 @@ def test_query_failed_emitted_on_ollama_timeout(
 def test_query_failed_emitted_on_qdrant_unavailable(
     baseline_config, plan_cache, mock_ollama, mock_qdrant_backend
 ) -> None:
-    mock_qdrant_backend.search.side_effect = ConnectionError("qdrant down")
+    mock_qdrant_backend.query_points.side_effect = ConnectionError("qdrant down")
     qdrant = QdrantClient(
         baseline_config.qdrant,
         baseline_config.embedding.vector_dim,

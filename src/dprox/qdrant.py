@@ -148,9 +148,14 @@ class QdrantClient:
         q_filter = build_classification_filter(groups)
         start = time.monotonic()
         try:
-            result = await self._client.search(
+            # qdrant-client >=1.10 exposes the universal query API. Server
+            # 1.13.x supports it; AsyncQdrantClient.search() was removed by
+            # 1.18. Response is QueryResponse with .points: list[ScoredPoint]
+            # (the ScoredPoint shape — id/score/payload — is unchanged from
+            # the old search() return type, so _point_to_hit is the same).
+            response = await self._client.query_points(
                 collection_name=self._config.collection,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=q_filter,
                 limit=limit,
                 with_payload=True,
@@ -173,7 +178,12 @@ class QdrantClient:
             ) from exc
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        hits = [self._point_to_hit(p) for p in result]
+        points = getattr(response, "points", None)
+        if points is None:
+            raise QdrantUnavailable(
+                "qdrant query_points response missing 'points' field"
+            )
+        hits = [self._point_to_hit(p) for p in points]
         return hits, elapsed_ms
 
     @staticmethod

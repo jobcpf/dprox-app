@@ -169,11 +169,12 @@ def mock_ollama(
 
 @pytest.fixture
 def mock_qdrant_backend(baseline_config: Config):
-    """An AsyncMock that mimics enough of AsyncQdrantClient for healthz/search.
+    """An AsyncMock that mimics enough of AsyncQdrantClient for healthz/query.
 
     Default behaviour: collection exists with vector size matching
-    baseline_config.embedding.vector_dim, search returns one synthetic hit.
-    Tests override the relevant method via .return_value / .side_effect.
+    baseline_config.embedding.vector_dim, query_points returns a
+    QueryResponse-shaped object (`.points`) with one synthetic hit.
+    Tests override via .return_value / .side_effect.
     """
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -188,20 +189,22 @@ def mock_qdrant_backend(baseline_config: Config):
         )
     )
 
-    backend.search.return_value = [
-        SimpleNamespace(
-            id=1,
-            score=0.81,
-            payload={
-                "text": "synthetic chunk",
-                "classification_group": "g_engineering",
-                "source_path_rel": "fixture/policy.docx",
-                "file_type": "docx",
-                "chunk_index": 0,
-                "chunk_total": 1,
-            },
-        )
-    ]
+    backend.query_points.return_value = SimpleNamespace(
+        points=[
+            SimpleNamespace(
+                id=1,
+                score=0.81,
+                payload={
+                    "text": "synthetic chunk",
+                    "classification_group": "g_engineering",
+                    "source_path_rel": "fixture/policy.docx",
+                    "file_type": "docx",
+                    "chunk_index": 0,
+                    "chunk_total": 1,
+                },
+            )
+        ]
+    )
     backend.close = AsyncMock(return_value=None)
     return backend
 

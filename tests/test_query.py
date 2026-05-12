@@ -71,7 +71,7 @@ def test_query_uses_default_limit_when_omitted(
 
     assert response.status_code == 200
     # baseline default_limit = 10
-    assert mock_qdrant_backend.search.await_args.kwargs["limit"] == 10
+    assert mock_qdrant_backend.query_points.await_args.kwargs["limit"] == 10
 
 
 def test_query_passes_caller_groups_to_qdrant_filter(
@@ -86,7 +86,7 @@ def test_query_passes_caller_groups_to_qdrant_filter(
     with _client(baseline_config, plan_cache, mock_ollama, qdrant, cn="agent_oversight") as c:
         c.post("/v1/query", json={"query": "x"})
 
-    q_filter = mock_qdrant_backend.search.await_args.kwargs["query_filter"]
+    q_filter = mock_qdrant_backend.query_points.await_args.kwargs["query_filter"]
     cond = q_filter.must[0]
     assert cond.key == "classification_group"
     # agent_oversight in the fixture has g_engineering + g_finance
@@ -97,31 +97,33 @@ def test_query_result_shape_matches_spec(
     baseline_config, plan_cache, mock_ollama, mock_qdrant_backend
 ) -> None:
     """Each result has all spec §4.2 fields; absent ones are null, not missing."""
-    mock_qdrant_backend.search.return_value = [
-        SimpleNamespace(
-            id=1,
-            score=0.9,
-            payload={
-                "text": "complete chunk",
-                "classification_group": "g_engineering",
-                "source_path_rel": "docs/x.docx",
-                "file_type": "docx",
-                "chunk_index": 2,
-                "chunk_total": 5,
-                "modified_at": "2026-04-28T08:00:00Z",
-                "indexed_at": "2026-04-28T08:15:00Z",
-            },
-        ),
-        SimpleNamespace(
-            id=2,
-            score=0.5,
-            payload={
-                # Optional fields absent
-                "text": "minimal chunk",
-                "classification_group": "g_engineering",
-            },
-        ),
-    ]
+    mock_qdrant_backend.query_points.return_value = SimpleNamespace(
+        points=[
+            SimpleNamespace(
+                id=1,
+                score=0.9,
+                payload={
+                    "text": "complete chunk",
+                    "classification_group": "g_engineering",
+                    "source_path_rel": "docs/x.docx",
+                    "file_type": "docx",
+                    "chunk_index": 2,
+                    "chunk_total": 5,
+                    "modified_at": "2026-04-28T08:00:00Z",
+                    "indexed_at": "2026-04-28T08:15:00Z",
+                },
+            ),
+            SimpleNamespace(
+                id=2,
+                score=0.5,
+                payload={
+                    # Optional fields absent
+                    "text": "minimal chunk",
+                    "classification_group": "g_engineering",
+                },
+            ),
+        ]
+    )
     qdrant = QdrantClient(
         baseline_config.qdrant,
         baseline_config.embedding.vector_dim,
@@ -366,7 +368,7 @@ def test_query_when_qdrant_times_out_returns_504(
     baseline_config, plan_cache, mock_ollama, mock_qdrant_backend
 ) -> None:
 
-    mock_qdrant_backend.search.side_effect = TimeoutError()
+    mock_qdrant_backend.query_points.side_effect = TimeoutError()
     qdrant = QdrantClient(
         baseline_config.qdrant,
         baseline_config.embedding.vector_dim,
@@ -382,7 +384,7 @@ def test_query_when_qdrant_times_out_returns_504(
 def test_query_when_qdrant_unreachable_returns_502(
     baseline_config, plan_cache, mock_ollama, mock_qdrant_backend
 ) -> None:
-    mock_qdrant_backend.search.side_effect = ConnectionError("qdrant down")
+    mock_qdrant_backend.query_points.side_effect = ConnectionError("qdrant down")
     qdrant = QdrantClient(
         baseline_config.qdrant,
         baseline_config.embedding.vector_dim,

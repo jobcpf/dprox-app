@@ -42,6 +42,11 @@ def _point(payload: dict, score: float = 0.85, point_id: int = 1):
     return SimpleNamespace(id=point_id, score=score, payload=payload)
 
 
+def _response(points: list) -> SimpleNamespace:
+    """Wrap a list of points in a QueryResponse-shaped object (.points)."""
+    return SimpleNamespace(points=points)
+
+
 def _collection_info(size: int):
     return SimpleNamespace(
         config=SimpleNamespace(
@@ -99,20 +104,22 @@ def test_filter_uses_must_not_should() -> None:
     assert f.must_not is None
 
 
-# --- QdrantClient.search ------------------------------------------------------
+# --- QdrantClient.search (calls AsyncQdrantClient.query_points under the hood) ---
 
 
 async def test_search_passes_built_filter_to_backend() -> None:
     backend = AsyncMock()
-    backend.search.return_value = []
+    backend.query_points.return_value = _response([])
     client = _client(backend)
 
     await client.search([0.1] * 4, frozenset({"g1", "g2"}), limit=5)
 
-    backend.search.assert_awaited_once()
-    kwargs = backend.search.await_args.kwargs
+    backend.query_points.assert_awaited_once()
+    kwargs = backend.query_points.await_args.kwargs
     assert kwargs["collection_name"] == "documents"
-    assert kwargs["query_vector"] == [0.1] * 4
+    # qdrant-client universal query API: vector is passed as `query=`,
+    # not `query_vector=` (the old search()/1.13- kwarg).
+    assert kwargs["query"] == [0.1] * 4
     assert kwargs["limit"] == 5
     assert kwargs["with_payload"] is True
 
@@ -122,24 +129,39 @@ async def test_search_passes_built_filter_to_backend() -> None:
     assert set(q_filter.must[0].match.any) == {"g1", "g2"}
 
 
+async def test_search_does_not_call_legacy_search_method() -> None:
+    """Regression guard: dprox must use query_points (qdrant-client >=1.10),
+    NOT search() (removed circa 1.13). See dprox-v0.1.0-qdrant-client-bug.md."""
+    backend = AsyncMock()
+    backend.query_points.return_value = _response([])
+    client = _client(backend)
+
+    await client.search([0.1] * 4, frozenset({"g"}), limit=5)
+
+    backend.query_points.assert_awaited_once()
+    backend.search.assert_not_called()
+
+
 async def test_search_projects_payload_to_qdrant_hit() -> None:
     backend = AsyncMock()
-    backend.search.return_value = [
-        _point(
-            {
-                "text": "wage policy",
-                "classification_group": "arc_g0",
-                "source_path_rel": "drive/policy.docx",
-                "file_type": "docx",
-                "chunk_index": 3,
-                "chunk_total": 12,
-                "modified_at": "2026-04-28T08:00:00Z",
-                "indexed_at": "2026-04-28T08:15:00Z",
-            },
-            score=0.781,
-            point_id=42,
-        )
-    ]
+    backend.query_points.return_value = _response(
+        [
+            _point(
+                {
+                    "text": "wage policy",
+                    "classification_group": "arc_g0",
+                    "source_path_rel": "drive/policy.docx",
+                    "file_type": "docx",
+                    "chunk_index": 3,
+                    "chunk_total": 12,
+                    "modified_at": "2026-04-28T08:00:00Z",
+                    "indexed_at": "2026-04-28T08:15:00Z",
+                },
+                score=0.781,
+                point_id=42,
+            )
+        ]
+    )
     client = _client(backend)
 
     hits, elapsed_ms = await client.search([0.1] * 4, frozenset({"arc_g0"}), limit=10)
@@ -158,9 +180,9 @@ async def test_search_projects_payload_to_qdrant_hit() -> None:
 async def test_search_handles_minimal_payload() -> None:
     """Optional fields can be missing; required fields cannot."""
     backend = AsyncMock()
-    backend.search.return_value = [
-        _point({"text": "minimal", "classification_group": "g_min"})
-    ]
+    backend.query_points.return_value = _response(
+        [_point({"text": "minimal", "classification_group": "g_min"})]
+    )
     client = _client(backend)
 
     hits, _ = await client.search([0.1] * 4, frozenset({"g_min"}), limit=10)
@@ -172,9 +194,9 @@ async def test_search_handles_minimal_payload() -> None:
 
 async def test_search_rejects_point_missing_text() -> None:
     backend = AsyncMock()
-    backend.search.return_value = [
-        _point({"classification_group": "g_eng"})  # no 'text'
-    ]
+    backend.query_points.return_value = _response(
+        [_point({"classification_group": "g_eng"})]  # no 'text'
+    )
     client = _client(backend)
 
     with pytest.raises(QdrantUnavailable, match="missing 'text'"):
@@ -183,9 +205,9 @@ async def test_search_rejects_point_missing_text() -> None:
 
 async def test_search_rejects_point_missing_classification_group() -> None:
     backend = AsyncMock()
-    backend.search.return_value = [
-        _point({"text": "orphan"})  # no classification_group
-    ]
+    backend.query_points.return_value = _response(
+        [_point({"text": "orphan"})]  # no classification_group
+    )
     client = _client(backend)
 
     with pytest.raises(QdrantUnavailable, match="missing 'classification_group'"):
@@ -194,18 +216,29 @@ async def test_search_rejects_point_missing_classification_group() -> None:
 
 async def test_search_rejects_point_with_empty_text() -> None:
     backend = AsyncMock()
-    backend.search.return_value = [
-        _point({"text": "", "classification_group": "g"})
-    ]
+    backend.query_points.return_value = _response(
+        [_point({"text": "", "classification_group": "g"})]
+    )
     client = _client(backend)
 
     with pytest.raises(QdrantUnavailable, match="missing 'text'"):
         await client.search([0.1] * 4, frozenset({"g"}), limit=10)
 
 
+async def test_search_rejects_response_without_points_attribute() -> None:
+    """Defence in depth: a future client returning a non-QueryResponse
+    object surfaces as QdrantUnavailable rather than AttributeError."""
+    backend = AsyncMock()
+    backend.query_points.return_value = SimpleNamespace()  # no .points
+    client = _client(backend)
+
+    with pytest.raises(QdrantUnavailable, match="missing 'points'"):
+        await client.search([0.1] * 4, frozenset({"g"}), limit=10)
+
+
 async def test_search_timeout_raises_qdrant_timeout() -> None:
     backend = AsyncMock()
-    backend.search.side_effect = TimeoutError()
+    backend.query_points.side_effect = TimeoutError()
     client = _client(backend)
 
     with pytest.raises(QdrantTimeout, match="timed out"):
@@ -214,7 +247,7 @@ async def test_search_timeout_raises_qdrant_timeout() -> None:
 
 async def test_search_unexpected_response_raises_unavailable() -> None:
     backend = AsyncMock()
-    backend.search.side_effect = UnexpectedResponse(
+    backend.query_points.side_effect = UnexpectedResponse(
         status_code=503, reason_phrase="busy", content=b"", headers={}
     )
     client = _client(backend)
@@ -225,7 +258,7 @@ async def test_search_unexpected_response_raises_unavailable() -> None:
 
 async def test_search_response_handling_error_raises_unavailable() -> None:
     backend = AsyncMock()
-    backend.search.side_effect = ResponseHandlingException("malformed")
+    backend.query_points.side_effect = ResponseHandlingException("malformed")
     client = _client(backend)
 
     with pytest.raises(QdrantUnavailable, match="response error"):
@@ -234,7 +267,7 @@ async def test_search_response_handling_error_raises_unavailable() -> None:
 
 async def test_search_unknown_exception_wrapped_as_unavailable() -> None:
     backend = AsyncMock()
-    backend.search.side_effect = ConnectionError("refused")
+    backend.query_points.side_effect = ConnectionError("refused")
     client = _client(backend)
 
     with pytest.raises(QdrantUnavailable, match="ConnectionError"):
@@ -243,7 +276,7 @@ async def test_search_unknown_exception_wrapped_as_unavailable() -> None:
 
 async def test_search_empty_results_returns_empty_list() -> None:
     backend = AsyncMock()
-    backend.search.return_value = []
+    backend.query_points.return_value = _response([])
     client = _client(backend)
 
     hits, _ = await client.search([0.1] * 4, frozenset({"g"}), limit=10)
