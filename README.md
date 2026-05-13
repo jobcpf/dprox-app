@@ -12,9 +12,9 @@ Earlier inputs and superseded specs are under `../integrations/archive/`.
 
 ## Status
 
-Feature-complete for v0.1. Build steps 1–7 + 10 + 11 land in this repo;
-step 12 (smoke against the real platform) is the remaining work and
-needs a real Qdrant + agent cert.
+**v0.1.1 is deployed on the platform** (`ghcr.io/jobcpf/dprox:v0.1.1`, GHCR
+public). All twelve build steps are complete; end-to-end `/v1/query`
+against the real arc Qdrant + Ollama is passing on otter.
 
 | Step | Coverage |
 |---|---|
@@ -23,11 +23,18 @@ needs a real Qdrant + agent cert.
 | 3. Plan | `compiled_plan.yml` parser + `PlanCache` (mtime + unknown-CN reload, rate-limited, fail-closed) |
 | 4. mTLS | uvicorn `CERT_OPTIONAL`, custom protocol, `require_mtls` dependency (EKU + single-CN), public `/healthz`/`/version` |
 | 5. Ollama | `OllamaClient.embed` + `check_health`, error taxonomy (`OllamaTimeout` → 504, `OllamaUnavailable` → 502 incl. dim mismatch) |
-| 6. Qdrant | RBAC-filtered `search` + collection health, error taxonomy (`QdrantTimeout` → 504, `QdrantUnavailable` → 502); filter-construction path 100% tested |
+| 6. Qdrant | RBAC-filtered search via `query_points` + collection health, error taxonomy (`QdrantTimeout` → 504, `QdrantUnavailable` → 502); filter-construction path 100% tested |
 | 7. `/v1/query` | Full pipeline auth → plan → embed → search → respond, spec §4.2 response shape, validation order |
 | 10. Audit logging | `event:"query"`, `event:"query_failed"`, `event:"auth_rejected"` via structlog; `query_text` only at DEBUG |
 | 11. CI + GHCR | `Dockerfile` (slim runtime, drops to UID 10042); `test.yml` (Py 3.12 + 3.13 matrix); `release.yml` builds + pushes on tag |
-| 12. Real-platform smoke | TODO |
+| 12. Real-platform smoke | ✓ deployed on otter for `org=arc` (2026-05-13); `agent_arc_exec` end-to-end query succeeded |
+
+### Release history
+
+| Tag | Notes |
+|---|---|
+| `v0.1.0` (2026-05-12) | First public image. Smoke surfaced [`qdrant-client` API drift](../integrations/archive/dprox-v0.1.0-qdrant-client-bug.md) — `AsyncQdrantClient.search()` removed in 1.18. |
+| `v0.1.1` (2026-05-12) | Migrated to `query_points` (universal query API). Pin tightened to `qdrant-client>=1.13,<2.0`. Two regression-guard tests added. |
 
 ## Quick start (venv, Windows PowerShell)
 
